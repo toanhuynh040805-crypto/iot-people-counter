@@ -1,3 +1,2 @@
-Adafruit GFX Library
-Adafruit SSD1306
+LiquidCrystal_I2C
 PubSubClient
