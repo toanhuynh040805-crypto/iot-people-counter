@@ -40,5 +40,10 @@
     [ "esp:27", "buzzer:2", "green", [] ],
     [ "buzzer:1", "esp:GND.2", "black", [] ]
   ],
+  "serialMonitor": {
+    "display": "terminal",
+    "newline": "lf",
+    "convertEol": true
+  },
   "dependencies": {}
 }
