@@ -1,14 +1,30 @@
-# Node-RED Middleware & Dashboard
+# Node-RED Middleware & Dashboard 2.0
 
-## 1. Import flow
+## 1. Cài Node-RED Dashboard 2.0
 
-Mở Node-RED tại:
+Mở Node-RED:
 
 ```text
 http://127.0.0.1:1880
 ```
 
-Sau đó:
+Vào:
+
+```text
+Menu → Manage palette → Install
+```
+
+Tìm và cài:
+
+```text
+@flowfuse/node-red-dashboard
+```
+
+Lưu ý: dùng Dashboard 2.0 của FlowFuse, không dùng gói `node-red-dashboard` cũ.
+
+## 2. Import flow
+
+Trong Node-RED:
 
 ```text
 Menu → Import → select a file → node-red/flow.json → Import → Deploy
@@ -20,7 +36,27 @@ Broker mặc định trong flow:
 127.0.0.1:1883
 ```
 
-## 2. Topic nhận dữ liệu
+Sau khi Deploy, mở Dashboard:
+
+```text
+http://127.0.0.1:1880/dashboard/people-counter
+```
+
+## 3. Dashboard hiện có
+
+Dashboard hiển thị:
+
+- IN
+- OUT
+- CURRENT
+- MAX
+- Trạng thái `CÒN CHỖ / ĐÃ ĐẦY`
+- Sự kiện gần nhất
+- Biểu đồ CURRENT theo thời gian
+- Nút RESET bộ đếm
+- Thanh chỉnh MAX từ 1 đến 20
+
+## 4. Topic nhận dữ liệu
 
 ### Trạng thái hiện tại
 
@@ -57,7 +93,7 @@ Payload mẫu:
 }
 ```
 
-## 3. Lệnh gửi ngược về ESP32
+## 5. Lệnh gửi ngược về ESP32
 
 ### RESET
 
@@ -73,44 +109,37 @@ Topic: nhom17/people/cmd/max
 Payload: 5
 ```
 
-## 4. Dashboard 2.0
+## 6. Kiểm tra MQTT thủ công
 
-Sau khi flow MQTT cơ bản chạy đúng, cài Dashboard 2.0 trong Node-RED:
+Mở một PowerShell khác:
 
-```text
-@flowfuse/node-red-dashboard
+```powershell
+& "C:\Program Files\mosquitto\mosquitto_sub.exe" -h 127.0.0.1 -p 1883 -t "nhom17/#" -v
 ```
 
-Dashboard nên có:
+Nếu ESP32/Wokwi kết nối đúng, bạn sẽ thấy các topic `status` và `event` xuất hiện tại đây.
 
-- IN
-- OUT
-- CURRENT
-- MAX
-- Trạng thái `CÒN CHỖ / ĐÃ ĐẦY`
-- Biểu đồ CURRENT theo thời gian
-- Lịch sử sự kiện IN/OUT
-- Nút RESET
-- Ô nhập SET MAX
-
-## 5. Logic cảnh báo
-
-Node `Check Capacity` kiểm tra:
+## 7. Luồng end-to-end cần demo
 
 ```text
-current >= max
+HC-SR04 A/B
+   ↓
+ESP32 State Machine
+   ↓
+Wi-Fi + MQTT
+   ↓
+Mosquitto Broker
+   ↓
+Node-RED Middleware
+   ↓
+Dashboard 2.0
 ```
 
-Nếu đúng:
+Demo tối thiểu:
 
-```text
-alert = true
-message = KHU VUC DA DAY
-```
-
-Nếu sai:
-
-```text
-alert = false
-message = CON CHO
-```
+1. A → B → IN tăng.
+2. B → A → OUT tăng.
+3. CURRENT cập nhật trên Dashboard.
+4. CURRENT đạt MAX → trạng thái ĐÃ ĐẦY, LED đỏ và buzzer.
+5. Bấm RESET trên Dashboard → ESP32 về 0.
+6. Thay đổi MAX trên Dashboard → ESP32 cập nhật MAX qua MQTT.
