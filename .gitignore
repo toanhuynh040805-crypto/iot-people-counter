@@ -1,0 +1,22 @@
+# Build outputs
+build/
+*.bin
+*.elf
+*.map
+
+# IDE
+.vscode/
+.idea/
+
+# Python / camera bonus
+.venv/
+__pycache__/
+*.pyc
+
+# Environment / local config
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
