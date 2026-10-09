@@ -23,8 +23,8 @@
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 const float DISTANCE_LIMIT_CM = 50.0;
-// Tang timeout de thao tac slider Wokwi de hon khi demo
-const unsigned long PASS_TIMEOUT_MS = 15000;
+// Cho 30 giay de thao tac slider Wokwi khi demo
+const unsigned long PASS_TIMEOUT_MS = 30000;
 
 int totalIn = 0;
 int totalOut = 0;
@@ -72,6 +72,24 @@ void printPaddedLine(uint8_t row, const String& text) {
   lcd.print(line);
 }
 
+void showIdleScreen() {
+  printPaddedLine(0, "IN:" + String(totalIn) + " OUT:" + String(totalOut));
+
+  String line2 = "CUR:" + String(currentPeople) + "/" + String(maxPeople);
+  line2 += (currentPeople >= maxPeople) ? " FULL" : " OK";
+  printPaddedLine(1, line2);
+}
+
+void showWaitForB() {
+  printPaddedLine(0, "SENSOR A: ON");
+  printPaddedLine(1, "CHO SENSOR B");
+}
+
+void showWaitForA() {
+  printPaddedLine(0, "SENSOR B: ON");
+  printPaddedLine(1, "CHO SENSOR A");
+}
+
 void updateOutputs() {
   currentPeople = totalIn - totalOut;
   if (currentPeople < 0) currentPeople = 0;
@@ -84,11 +102,7 @@ void updateOutputs() {
   if (full) tone(BUZZER, 1000);
   else noTone(BUZZER);
 
-  printPaddedLine(0, "IN:" + String(totalIn) + " OUT:" + String(totalOut));
-
-  String line2 = "CUR:" + String(currentPeople) + "/" + String(maxPeople);
-  line2 += full ? " FULL" : " OK";
-  printPaddedLine(1, line2);
+  showIdleScreen();
 }
 
 void publishStatus() {
@@ -169,7 +183,7 @@ void connectWiFi() {
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
   } else {
-    Serial.println(" TIMEOUT - van tiep tuc chay cam bien");
+    Serial.println(" TIMEOUT - VAN CHAY CAM BIEN");
   }
 }
 
@@ -195,12 +209,11 @@ bool connectMqtt() {
 
 void confirmIn() {
   totalIn++;
+  state = IDLE;
   updateOutputs();
   publishEvent("IN");
   publishStatus();
-
   Serial.println(">>> KHACH VAO: A -> B");
-  state = IDLE;
 }
 
 void confirmOut() {
@@ -208,19 +221,22 @@ void confirmOut() {
 
   if (currentPeople > 0) {
     totalOut++;
-    updateOutputs();
-    publishEvent("OUT");
-    publishStatus();
     Serial.println("<<< KHACH RA: B -> A");
+    publishEvent("OUT");
   } else {
     Serial.println("KHONG THE OUT VI CURRENT = 0");
   }
 
   state = IDLE;
+  updateOutputs();
+  publishStatus();
 }
 
 void setup() {
   Serial.begin(115200);
+  delay(100);
+  Serial.println();
+  Serial.println("=== DE TAI 52 - NHOM 17 ===");
 
   pinMode(TRIG_A, OUTPUT);
   pinMode(ECHO_A, INPUT);
@@ -248,13 +264,13 @@ void setup() {
   connectMqtt();
 
   Serial.println("HE THONG SAN SANG");
-  Serial.println("Quy tac: distance < 50cm = PHAT HIEN");
+  Serial.println("< 50cm = PHAT HIEN, >= 50cm = KHONG PHAT HIEN");
 }
 
 void loop() {
-  // ====== 1. DOC CAM BIEN TRUOC - KHONG DE MQTT LAM CHAM DEM ======
+  // 1) Doc hai cam bien
   float distanceA = readDistance(TRIG_A, ECHO_A);
-  delay(60); // giam cross-talk giua hai HC-SR04
+  delay(60);
   float distanceB = readDistance(TRIG_B, ECHO_B);
 
   bool detectedA = distanceA < DISTANCE_LIMIT_CM;
@@ -266,7 +282,7 @@ void loop() {
   previousA = detectedA;
   previousB = detectedB;
 
-  // Log moi 500ms de nhin thay Wokwi co doc dung slider hay khong
+  // Log de test slider Wokwi
   if (millis() - lastSensorLog >= 500) {
     lastSensorLog = millis();
     Serial.print("[SENSOR] A=");
@@ -283,47 +299,50 @@ void loop() {
     else Serial.println("B_FIRST");
   }
 
-  // ====== 2. STATE MACHINE ======
+  // 2) State machine: A->B = IN, B->A = OUT
   switch (state) {
     case IDLE:
       if (eventA && !eventB) {
         state = A_FIRST;
         stateStartTime = millis();
+        showWaitForB();
         Serial.println("A PHAT HIEN TRUOC -> CHO B");
       } else if (eventB && !eventA) {
         state = B_FIRST;
         stateStartTime = millis();
+        showWaitForA();
         Serial.println("B PHAT HIEN TRUOC -> CHO A");
       } else if (eventA && eventB) {
-        // Neu Wokwi thay ca hai gan nhu cung luc, uu tien A -> B de demo khong bi mat event B
-        state = A_FIRST;
-        stateStartTime = millis();
-        Serial.println("A VA B CUNG PHAT HIEN -> TAM CHON A TRUOC");
+        Serial.println("A VA B CUNG PHAT HIEN -> HUY LUOT");
+        printPaddedLine(0, "A+B CUNG LUC");
+        printPaddedLine(1, "HUY LUOT");
+        delay(400);
+        updateOutputs();
       }
       break;
 
     case A_FIRST:
-      // Dung muc detected thay vi chi event de tranh bo lo sensor B tren Wokwi
       if (detectedB) {
         confirmIn();
       } else if (millis() - stateStartTime > PASS_TIMEOUT_MS) {
         Serial.println("TIMEOUT A -> HUY LUOT");
         state = IDLE;
+        updateOutputs();
       }
       break;
 
     case B_FIRST:
-      // Dung muc detected thay vi chi event de tranh bo lo sensor A tren Wokwi
       if (detectedA) {
         confirmOut();
       } else if (millis() - stateStartTime > PASS_TIMEOUT_MS) {
         Serial.println("TIMEOUT B -> HUY LUOT");
         state = IDLE;
+        updateOutputs();
       }
       break;
   }
 
-  // ====== 3. MQTT SAU CUNG ======
+  // 3) MQTT xu ly sau cung, khong lam anh huong viec dem
   if (mqtt.connected()) {
     mqtt.loop();
   } else if (WiFi.status() == WL_CONNECTED) {
