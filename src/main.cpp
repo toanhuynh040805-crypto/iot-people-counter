@@ -2,8 +2,13 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <LiquidCrystal_I2C.h>
+
+// =====================================================
+// DE TAI 52 - NHOM 17
+// DEM KHACH VAO/RA & GIOI HAN SO NGUOI
+// 2x HC-SR04 + ESP32 + LCD + LED + Buzzer + MQTT
+// =====================================================
 
 #define TRIG_A 5
 #define ECHO_A 18
@@ -15,9 +20,8 @@
 #define SDA_PIN 21
 #define SCL_PIN 22
 
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+// LCD 16x2 I2C - Wokwi/default module address 0x27
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 const float DISTANCE_LIMIT_CM = 50.0;
 const unsigned long PASS_TIMEOUT_MS = 6000;
@@ -59,67 +63,79 @@ float readDistance(int trigPin, int echoPin) {
   return duration * 0.034 / 2.0;
 }
 
+void printPaddedLine(uint8_t row, const String& text) {
+  lcd.setCursor(0, row);
+  String line = text;
+  if (line.length() > 16) line = line.substring(0, 16);
+  while (line.length() < 16) line += ' ';
+  lcd.print(line);
+}
+
 void updateOutputs() {
   currentPeople = totalIn - totalOut;
   if (currentPeople < 0) currentPeople = 0;
 
   bool full = currentPeople >= maxPeople;
+
   digitalWrite(LED_GREEN, full ? LOW : HIGH);
   digitalWrite(LED_RED, full ? HIGH : LOW);
 
   if (full) tone(BUZZER, 1000);
   else noTone(BUZZER);
 
-  display.clearDisplay();
-  display.setTextColor(SSD1306_WHITE);
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.println("DE TAI 52 - NHOM 17");
-  display.setCursor(0, 14);
-  display.print("IN      : "); display.println(totalIn);
-  display.print("OUT     : "); display.println(totalOut);
-  display.print("CURRENT : "); display.println(currentPeople);
-  display.print("MAX     : "); display.println(maxPeople);
-  display.setCursor(0, 55);
-  if (full) display.print("*** DA DAY ***");
-  else {
-    display.print("CON TRONG: ");
-    display.print(maxPeople - currentPeople);
-  }
-  display.display();
+  printPaddedLine(0, "IN:" + String(totalIn) + " OUT:" + String(totalOut));
+
+  String line2 = "CUR:" + String(currentPeople) + "/" + String(maxPeople);
+  line2 += full ? " FULL" : " OK";
+  printPaddedLine(1, line2);
 }
 
 void publishStatus() {
   if (!mqtt.connected()) return;
+
   String status = currentPeople >= maxPeople ? "FULL" : "AVAILABLE";
   String payload = "{\"in\":" + String(totalIn) +
                    ",\"out\":" + String(totalOut) +
                    ",\"current\":" + String(currentPeople) +
                    ",\"max\":" + String(maxPeople) +
                    ",\"status\":\"" + status + "\"}";
+
   mqtt.publish(TOPIC_STATUS, payload.c_str(), true);
 }
 
 void publishEvent(const char* eventName) {
   if (!mqtt.connected()) return;
+
   String payload = "{\"event\":\"" + String(eventName) +
                    "\",\"in\":" + String(totalIn) +
                    ",\"out\":" + String(totalOut) +
                    ",\"current\":" + String(currentPeople) + "}";
+
   mqtt.publish(TOPIC_EVENT, payload.c_str());
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String message;
-  for (unsigned int i = 0; i < length; i++) message += (char)payload[i];
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+
+  Serial.print("[MQTT] ");
+  Serial.print(topic);
+  Serial.print(" -> ");
+  Serial.println(message);
 
   if (String(topic) == TOPIC_CMD_RESET &&
       (message == "RESET" || message == "reset" || message == "1")) {
     totalIn = 0;
     totalOut = 0;
+    currentPeople = 0;
+    state = IDLE;
+
     updateOutputs();
     publishStatus();
     publishEvent("RESET");
+    Serial.println("DA RESET BO DEM");
   }
 
   if (String(topic) == TOPIC_CMD_MAX) {
@@ -129,6 +145,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       updateOutputs();
       publishStatus();
       publishEvent("SET_MAX");
+      Serial.print("MAX MOI = ");
+      Serial.println(maxPeople);
     }
   }
 }
@@ -136,18 +154,24 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 void connectWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD, 6);
+
   Serial.print("Dang ket noi WiFi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(250);
     Serial.print('.');
   }
+
   Serial.println(" OK");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
 }
 
 bool connectMqtt() {
   String clientId = "nhom17-esp32-" + String((uint32_t)ESP.getEfuseMac(), HEX);
+
+  Serial.print("Dang ket noi MQTT... ");
   if (!mqtt.connect(clientId.c_str())) {
-    Serial.print("MQTT failed rc=");
+    Serial.print("FAILED rc=");
     Serial.println(mqtt.state());
     return false;
   }
@@ -155,7 +179,8 @@ bool connectMqtt() {
   mqtt.subscribe(TOPIC_CMD_RESET);
   mqtt.subscribe(TOPIC_CMD_MAX);
   publishStatus();
-  Serial.println("MQTT connected");
+
+  Serial.println("OK");
   return true;
 }
 
@@ -164,12 +189,14 @@ void confirmIn() {
   updateOutputs();
   publishEvent("IN");
   publishStatus();
+
   Serial.println(">>> KHACH VAO: A -> B");
   state = IDLE;
 }
 
 void confirmOut() {
   currentPeople = totalIn - totalOut;
+
   if (currentPeople > 0) {
     totalOut++;
     updateOutputs();
@@ -179,6 +206,7 @@ void confirmOut() {
   } else {
     Serial.println("KHONG THE OUT VI CURRENT = 0");
   }
+
   state = IDLE;
 }
 
@@ -195,10 +223,12 @@ void setup() {
   noTone(BUZZER);
 
   Wire.begin(SDA_PIN, SCL_PIN);
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println("LOI OLED");
-    while (true) delay(100);
-  }
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  printPaddedLine(0, "DE TAI 52");
+  printPaddedLine(1, "NHOM 17");
+  delay(800);
 
   updateOutputs();
   connectWiFi();
@@ -222,13 +252,16 @@ void loop() {
   }
 
   float distanceA = readDistance(TRIG_A, ECHO_A);
-  delay(60);
+  delay(60); // giam cross-talk giua hai HC-SR04
   float distanceB = readDistance(TRIG_B, ECHO_B);
 
   bool detectedA = distanceA < DISTANCE_LIMIT_CM;
   bool detectedB = distanceB < DISTANCE_LIMIT_CM;
+
+  // Chi tao event o canh chuyen tu khong-phat-hien -> phat-hien
   bool eventA = detectedA && !previousA;
   bool eventB = detectedB && !previousB;
+
   previousA = detectedA;
   previousB = detectedB;
 
@@ -237,26 +270,28 @@ void loop() {
       if (eventA) {
         state = A_FIRST;
         stateStartTime = millis();
-        Serial.println("A truoc -> cho B");
+        Serial.println("A PHAT HIEN TRUOC -> CHO B");
       } else if (eventB) {
         state = B_FIRST;
         stateStartTime = millis();
-        Serial.println("B truoc -> cho A");
+        Serial.println("B PHAT HIEN TRUOC -> CHO A");
       }
       break;
 
     case A_FIRST:
-      if (eventB) confirmIn();
-      else if (millis() - stateStartTime > PASS_TIMEOUT_MS) {
-        Serial.println("TIMEOUT A -> HUY");
+      if (eventB) {
+        confirmIn();
+      } else if (millis() - stateStartTime > PASS_TIMEOUT_MS) {
+        Serial.println("TIMEOUT A -> HUY LUOT");
         state = IDLE;
       }
       break;
 
     case B_FIRST:
-      if (eventA) confirmOut();
-      else if (millis() - stateStartTime > PASS_TIMEOUT_MS) {
-        Serial.println("TIMEOUT B -> HUY");
+      if (eventA) {
+        confirmOut();
+      } else if (millis() - stateStartTime > PASS_TIMEOUT_MS) {
+        Serial.println("TIMEOUT B -> HUY LUOT");
         state = IDLE;
       }
       break;
