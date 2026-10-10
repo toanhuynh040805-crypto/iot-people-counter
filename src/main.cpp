@@ -76,7 +76,9 @@ void showIdleScreen() {
   printPaddedLine(0, "IN:" + String(totalIn) + " OUT:" + String(totalOut));
 
   String line2 = "CUR:" + String(currentPeople) + "/" + String(maxPeople);
-  line2 += (currentPeople >= maxPeople) ? " FULL" : " OK";
+  if (currentPeople > maxPeople) line2 += " OVER";
+  else if (currentPeople == maxPeople) line2 += " MAX";
+  else line2 += " OK";
   printPaddedLine(1, line2);
 }
 
@@ -94,12 +96,14 @@ void updateOutputs() {
   currentPeople = totalIn - totalOut;
   if (currentPeople < 0) currentPeople = 0;
 
-  bool full = currentPeople >= maxPeople;
+  // Chi canh bao khi SO NGUOI VUOT QUA gioi han.
+  // Vi du maxPeople = 3: 0..3 van LED xanh, tu 4 tro len LED do + buzzer.
+  bool overLimit = currentPeople > maxPeople;
 
-  digitalWrite(LED_GREEN, full ? LOW : HIGH);
-  digitalWrite(LED_RED, full ? HIGH : LOW);
+  digitalWrite(LED_GREEN, overLimit ? LOW : HIGH);
+  digitalWrite(LED_RED, overLimit ? HIGH : LOW);
 
-  if (full) tone(BUZZER, 1000);
+  if (overLimit) tone(BUZZER, 1000);
   else noTone(BUZZER);
 
   showIdleScreen();
@@ -108,7 +112,11 @@ void updateOutputs() {
 void publishStatus() {
   if (!mqtt.connected()) return;
 
-  String status = currentPeople >= maxPeople ? "FULL" : "AVAILABLE";
+  String status;
+  if (currentPeople > maxPeople) status = "OVER_LIMIT";
+  else if (currentPeople == maxPeople) status = "MAX";
+  else status = "AVAILABLE";
+
   String payload = "{\"in\":" + String(totalIn) +
                    ",\"out\":" + String(totalOut) +
                    ",\"current\":" + String(currentPeople) +
